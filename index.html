@@ -190,7 +190,7 @@
             <div class="flex items-center space-x-1.5 min-w-0">
                 <i class="fa-solid fa-layer-group text-indigo-500"></i>
                 <select id="stage-select" class="bg-transparent font-bold text-slate-700 dark:text-slate-200 focus:outline-none cursor-pointer max-w-[150px]">
-                    <option value="1">Stage 1 — Very Easy</option>
+                    <option value="1">Stage 1 — First Move</option>
                     <option value="2">Stage 2 — King</option>
                     <option value="3">Stage 3 — Knight</option>
                     <option value="4">Stage 4 — Bishop</option>
@@ -211,6 +211,7 @@
                 <span id="mistakes-display" class="font-bold text-rose-600 dark:text-rose-400">0/5</span>
             </div>
         </div>
+        <p id="stage-subtitle" class="text-center text-xs sm:text-sm text-slate-500 dark:text-slate-400 font-semibold mb-3 px-2"></p>
 
         <!-- Sudoku Board Wrapper -->
         <div class="relative w-full flex justify-center items-center my-auto">
@@ -227,17 +228,11 @@
                 </div>
                 <span>Undo</span>
             </button>
-            <button id="btn-erase" class="flex flex-col items-center text-slate-600 dark:text-slate-300 btn-active">
-                <div class="w-11 h-11 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm flex items-center justify-center mb-1 text-rose-500 text-base">
-                    <i class="fa-solid fa-eraser"></i>
-                </div>
-                <span>Erase</span>
-            </button>
             <button id="btn-hint" class="flex flex-col items-center text-slate-600 dark:text-slate-300 btn-active">
                 <div class="w-11 h-11 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm flex items-center justify-center mb-1 text-amber-500 text-base">
                     <i class="fa-solid fa-lightbulb"></i>
                 </div>
-                <span>Hint</span>
+                <span>Hint <span id="hints-remaining" class="text-amber-500">(7 left)</span></span>
             </button>
             <button id="btn-restart" class="flex flex-col items-center text-slate-600 dark:text-slate-300 btn-active">
                 <div class="w-11 h-11 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm flex items-center justify-center mb-1 text-indigo-500 text-base">
@@ -343,9 +338,11 @@
         </div>
     </div>
 
+    
     <script>
         // =========================
-        // Chestoku — Stage Progression
+        // Chestoku — Birthday Edition
+        // Stage-based progression
         // =========================
 
         let board = Array(81).fill(0);
@@ -355,57 +352,72 @@
         let selectedCellIndex = null;
         let mistakes = 0;
         const maxMistakes = 5;
+        const maxHints = 7;
+        let hintsUsed = 0;
         let timerSeconds = 0;
         let timerInterval = null;
         let moveHistory = [];
         let currentStage = 1;
         let gameFinished = false;
 
-        const PROGRESS_KEY = 'chestoku_progress_v2';
+        const PROGRESS_KEY = 'chestoku_birthday_progress_v2';
 
+        /*
+         * The stages intentionally introduce one rule at a time:
+         * 1. Classic Sudoku
+         * 2. King constraint
+         * 3. Knight constraint
+         * 4. Bishop parity constraint
+         * 5. All three chess constraints together
+         *
+         * Chess pieces are placed on given cells so their reference value
+         * never changes during a game.
+         */
         const STAGES = {
             1: {
-                name: 'Very Easy',
-                subtitle: 'Super easy start to get comfortable with the controls.',
-                puzzle: '020608000580009700000040000370000050600000004080000013000020000009800036000306090',
+                name: 'First Move',
+                subtitle: 'Easy warm-up: classic Sudoku with plenty of clues.',
+                puzzle: '530600902000195308108040507859061423020803090710920806960537204287400005345200070',
                 pieces: {}
             },
             2: {
                 name: 'King',
-                subtitle: 'Introductory level with the King constraint.',
-                puzzle: '530070000600195000098000060800060003400803001700020006060000280000419005000080079',
+                subtitle: 'A little harder: solve Sudoku and obey the King rule.',
+                puzzle: '034070012072005300008302500809001423000803700013004000061537004087019630340086109',
                 pieces: { 80: 'K' }
             },
             3: {
                 name: 'Knight',
-                subtitle: 'The Knight moves in an L. Respect its positions!',
-                puzzle: '000260701680070090190004500820100040004602900050003028009300074040050036703018000',
-                pieces: { 4: 'N' }
+                subtitle: 'Fewer clues now. Knight-move cells cannot be equal or consecutive.',
+                puzzle: '534070002670000048098000060050760020006003090000924800001000280007009635340280170',
+                pieces: { 19: 'N' }
             },
             4: {
                 name: 'Bishop',
-                subtitle: 'Check the diagonals. Even & Odd parity matters.',
-                puzzle: '000260701680070090190004500820100040004602900050003028009300074040050036703018000',
-                pieces: { 6: 'B' }
+                subtitle: 'A tougher puzzle: diagonal neighbours of the Bishop must share its parity.',
+                puzzle: '034070012600195008008002000009060000406803700003000856901000084000410005000000100',
+                pieces: { 4: 'B' }
             },
             5: {
                 name: 'Checkmate',
-                subtitle: 'Full challenge: All chess constraints active!',
-                puzzle: '000260701680070090190004500820100040004602900050003028009300074040050036703018000',
-                pieces: { 9: 'K', 4: 'N', 6: 'B' }
+                subtitle: 'The final challenge: fewer clues and all three chess rules.',
+                puzzle: '500078902070100340000040000050000420000003000003920806900000084000410600005000009',
+                pieces: { 0: 'N', 4: 'B', 80: 'K' }
             }
         };
 
-        // DOM Elements
+        // DOM
         const gridElement = document.getElementById('sudoku-grid');
         const timerDisplay = document.getElementById('timer-display');
         const mistakesDisplay = document.getElementById('mistakes-display');
+        const hintsRemainingDisplay = document.getElementById('hints-remaining');
         const instructionsModal = document.getElementById('instructions-modal');
         const gameOverModal = document.getElementById('game-over-modal');
         const btnStart = document.getElementById('btn-start-game');
         const btnHelp = document.getElementById('btn-help');
         const btnTheme = document.getElementById('btn-theme');
         const stageSelect = document.getElementById('stage-select');
+        const stageSubtitle = document.getElementById('stage-subtitle');
         const modalIcon = document.getElementById('modal-icon');
         const modalTitle = document.getElementById('modal-title');
         const modalMsg = document.getElementById('modal-msg');
@@ -417,24 +429,37 @@
             setupEventListeners();
             loadProgress();
             refreshStageOptions();
+            try {
+                if (localStorage.getItem('chestoku_theme') === 'dark') document.documentElement.classList.add('dark');
+            } catch (error) {}
             startNewGame();
         };
 
         function getUnlockedStage() {
-            const saved = parseInt(localStorage.getItem(PROGRESS_KEY), 10);
-            if (!Number.isInteger(saved)) return 1;
-            return Math.min(5, Math.max(1, saved));
+            try {
+                const saved = parseInt(localStorage.getItem(PROGRESS_KEY), 10);
+                if (!Number.isInteger(saved)) return 1;
+                return Math.min(5, Math.max(1, saved));
+            } catch (error) {
+                return 1;
+            }
         }
 
         function loadProgress() {
-            currentStage = getUnlockedStage();
-            stageSelect.value = String(currentStage);
+            // New progress key intentionally starts every new edition at Stage 1.
+            // Progress from earlier builds is ignored so old unlocks cannot skip stages.
+            currentStage = 1;
+            stageSelect.value = '1';
         }
 
         function saveProgress(stage) {
             const unlocked = getUnlockedStage();
             if (stage > unlocked) {
-                localStorage.setItem(PROGRESS_KEY, String(Math.min(5, stage)));
+                try {
+                    localStorage.setItem(PROGRESS_KEY, String(Math.min(5, stage)));
+                } catch (error) {
+                    // The game remains playable if storage is unavailable.
+                }
             }
         }
 
@@ -483,6 +508,7 @@
 
             gameFinished = false;
             const puzzleStr = stage.puzzle;
+            if (stageSubtitle) stageSubtitle.textContent = `Stage ${currentStage}/5 · ${stage.subtitle}`;
 
             chessPieces = Array(81).fill(null);
             for (const [idx, piece] of Object.entries(stage.pieces)) {
@@ -493,9 +519,13 @@
             initialBoard = [...board];
             solution = [...board];
 
+            // Standard Sudoku solver. The stage puzzles are authored so their
+            // solutions also satisfy their active chess constraints.
             solveSudoku(solution);
 
             mistakes = 0;
+            hintsUsed = 0;
+            updateHintsDisplay();
             moveHistory = [];
             selectedCellIndex = null;
             mistakesDisplay.textContent = `${mistakes}/${maxMistakes}`;
@@ -503,6 +533,10 @@
             startTimer();
             renderBoard();
         }
+
+        // =========================
+        // Sudoku
+        // =========================
 
         function solveSudoku(grid) {
             for (let i = 0; i < 81; i++) {
@@ -539,6 +573,10 @@
             return true;
         }
 
+        // =========================
+        // Chess constraints
+        // =========================
+
         function getChessAffectedCells(index) {
             if (index === null || !chessPieces[index]) return [];
 
@@ -573,6 +611,8 @@
             }
 
             if (piece === 'B') {
+                // Bishop rule for Chestoku:
+                // immediate diagonal neighbours must share the Bishop's parity.
                 for (const [dr, dc] of [[-1,-1],[-1,1],[1,-1],[1,1]]) {
                     const nr = row + dr, nc = col + dc;
                     if (nr >= 0 && nr < 9 && nc >= 0 && nc < 9) {
@@ -585,8 +625,10 @@
         }
 
         function violatesChessRule(index, number) {
-            if (number === 0) return null;
+            if (number === 0) return false;
 
+            // Check every active chess piece whose attack/constraint reaches
+            // the target cell.
             for (let pieceIndex = 0; pieceIndex < 81; pieceIndex++) {
                 const piece = chessPieces[pieceIndex];
                 if (!piece || pieceIndex === index) continue;
@@ -672,6 +714,10 @@
             }
         }
 
+        // =========================
+        // Input / game flow
+        // =========================
+
         function selectCell(index) {
             selectedCellIndex = index;
             renderBoard();
@@ -690,6 +736,7 @@
             if (number === correctValue) {
                 const chessViolation = violatesChessRule(targetIndex, number);
 
+                // A correct stage solution should never trigger this.
                 if (chessViolation) {
                     registerMistake(targetIndex, chessViolation);
                     return;
@@ -751,25 +798,6 @@
             }, 1500);
         }
 
-        function eraseCell() {
-            if (
-                gameFinished ||
-                selectedCellIndex === null ||
-                initialBoard[selectedCellIndex] !== 0
-            ) return;
-
-            if (board[selectedCellIndex] === 0) return;
-
-            moveHistory.push({
-                index: selectedCellIndex,
-                prevValue: board[selectedCellIndex],
-                newValue: 0
-            });
-
-            board[selectedCellIndex] = 0;
-            renderBoard();
-        }
-
         function undoMove() {
             if (gameFinished || moveHistory.length === 0) return;
 
@@ -779,15 +807,50 @@
             renderBoard();
         }
 
+        function updateHintsDisplay() {
+            if (!hintsRemainingDisplay) return;
+            const remaining = Math.max(0, maxHints - hintsUsed);
+            hintsRemainingDisplay.textContent = `(${remaining} left)`;
+            const hintButton = document.getElementById('btn-hint');
+            if (hintButton) {
+                hintButton.disabled = remaining === 0;
+                hintButton.classList.toggle('opacity-50', remaining === 0);
+                hintButton.classList.toggle('cursor-not-allowed', remaining === 0);
+            }
+        }
+
         function giveHint() {
-            if (
-                gameFinished ||
-                selectedCellIndex === null ||
-                initialBoard[selectedCellIndex] !== 0
-            ) return;
+            if (gameFinished) return;
+
+            if (hintsUsed >= maxHints) {
+                showMiniMessage('No hints left! You used all 7 hints for this stage.');
+                return;
+            }
+
+            if (selectedCellIndex === null || initialBoard[selectedCellIndex] !== 0) {
+                showMiniMessage('Select an empty cell first.');
+                return;
+            }
+
+            if (board[selectedCellIndex] === solution[selectedCellIndex]) {
+                showMiniMessage('That cell is already correct.');
+                return;
+            }
 
             const correctValue = solution[selectedCellIndex];
-            handleInput(correctValue);
+            const targetIndex = selectedCellIndex;
+
+            // A hint fills one empty/incorrect editable cell and consumes one hint.
+            hintsUsed++;
+            updateHintsDisplay();
+            moveHistory.push({
+                index: targetIndex,
+                prevValue: board[targetIndex],
+                newValue: correctValue
+            });
+            board[targetIndex] = correctValue;
+            renderBoard();
+            checkWin();
         }
 
         function checkWin() {
@@ -859,6 +922,10 @@
             gameOverModal.classList.remove('hidden');
         }
 
+        // =========================
+        // Events
+        // =========================
+
         function setupEventListeners() {
             document.querySelectorAll('.numpad-btn').forEach(btn => {
                 btn.addEventListener('click', () => {
@@ -866,7 +933,6 @@
                 });
             });
 
-            document.getElementById('btn-erase').addEventListener('click', eraseCell);
             document.getElementById('btn-undo').addEventListener('click', undoMove);
             document.getElementById('btn-hint').addEventListener('click', giveHint);
             document.getElementById('btn-restart').addEventListener('click', startNewGame);
@@ -899,11 +965,20 @@
 
             btnTheme.addEventListener('click', () => {
                 document.documentElement.classList.toggle('dark');
+                try {
+                    localStorage.setItem('chestoku_theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
+                } catch (error) {}
             });
 
             document.addEventListener('keydown', (e) => {
+                if (!gameOverModal.classList.contains('hidden') || !instructionsModal.classList.contains('hidden')) {
+                    if (e.key === 'Escape') {
+                        gameOverModal.classList.add('hidden');
+                        instructionsModal.classList.add('hidden');
+                    }
+                    return;
+                }
                 if (e.key >= '1' && e.key <= '9') handleInput(parseInt(e.key, 10));
-                if (e.key === 'Backspace' || e.key === 'Delete') eraseCell();
                 if (e.key === 'Escape') {
                     gameOverModal.classList.add('hidden');
                     instructionsModal.classList.add('hidden');
