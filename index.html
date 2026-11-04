@@ -304,7 +304,7 @@
                             <i class="fa-solid fa-chess-bishop text-emerald-500 text-sm mt-0.5"></i>
                             <div>
                                 <strong class="text-slate-800 dark:text-slate-200">Bishop (B):</strong>
-                                <p class="text-slate-600 dark:text-slate-400">Diagonal cells connected to the Bishop must maintain even/odd parity consistency.</p>
+                                <p class="text-slate-600 dark:text-slate-400">All cells along the Bishop's four diagonal rays must have the same even/odd parity as the Bishop.</p>
                             </div>
                         </li>
                     </ul>
@@ -359,8 +359,9 @@
         let moveHistory = [];
         let currentStage = 1;
         let gameFinished = false;
+        let gameStarted = false;
 
-        const PROGRESS_KEY = 'chestoku_birthday_progress_v2';
+        const PROGRESS_KEY = 'chestoku_birthday_progress_v3';
 
         /*
          * The stages intentionally introduce one rule at a time:
@@ -377,31 +378,33 @@
             1: {
                 name: 'First Move',
                 subtitle: 'Easy warm-up: classic Sudoku with plenty of clues.',
-                puzzle: '530600902000195308108040507859061423020803090710920806960537204287400005345200070',
+                puzzle: '500070928090020567027598041782304196046017035100860070071040089068931000059002603',
                 pieces: {}
             },
             2: {
                 name: 'King',
                 subtitle: 'A little harder: solve Sudoku and obey the King rule.',
-                puzzle: '034070012072005300008302500809001423000803700013004000061537004087019630340086109',
+                puzzle: '704300900010075804300400701143080506690520048250604109409100000500847290800000405',
                 pieces: { 80: 'K' }
             },
             3: {
                 name: 'Knight',
                 subtitle: 'Fewer clues now. Knight-move cells cannot be equal or consecutive.',
-                puzzle: '534070002670000048098000060050760020006003090000924800001000280007009635340280170',
+                puzzle: '060400283700000901290000074600740008100003700009612000906000500387001400405960032',
                 pieces: { 19: 'N' }
             },
             4: {
                 name: 'Bishop',
-                subtitle: 'A tougher puzzle: diagonal neighbours of the Bishop must share its parity.',
-                puzzle: '034070012600195008008002000009060000406803700003000856901000084000410005000000100',
-                pieces: { 4: 'B' }
+                subtitle: "A tougher puzzle: every square along the Bishop's full diagonals must share its parity.",
+                // This puzzle was rebuilt so every given clue agrees with the Bishop's parity rule.
+                // The Bishop is fixed on the top-left 2, and the puzzle has one valid solution.
+                puzzle: '200560300600070020504900000005023740000740102040000000016050200000030000023009078',
+                pieces: { 0: 'B' }
             },
             5: {
                 name: 'Checkmate',
                 subtitle: 'The final challenge: fewer clues and all three chess rules.',
-                puzzle: '500078902070100340000040000050000420000003000003920806900000084000410600005000009',
+                puzzle: '700016000052000000000000079000003000000001500004000006000000800000000000916000003',
                 pieces: { 0: 'N', 4: 'B', 80: 'K' }
             }
         };
@@ -446,8 +449,8 @@
         }
 
         function loadProgress() {
-            // New progress key intentionally starts every new edition at Stage 1.
-            // Progress from earlier builds is ignored so old unlocks cannot skip stages.
+            // This release uses a fresh progress key, so previous test unlocks are ignored.
+            // New players always begin at Stage 1; later wins unlock stages in order.
             currentStage = 1;
             stageSelect.value = '1';
         }
@@ -519,9 +522,12 @@
             initialBoard = [...board];
             solution = [...board];
 
-            // Standard Sudoku solver. The stage puzzles are authored so their
-            // solutions also satisfy their active chess constraints.
-            solveSudoku(solution);
+            // Solve this stage's transformed puzzle while enforcing its active
+            // chess constraints. Each stage now has its own puzzle and solution.
+            if (!solveSudoku(solution)) {
+                console.error(`Chestoku: Stage ${currentStage} has no valid solution.`);
+                showMiniMessage('This puzzle could not be loaded. Please restart the stage.');
+            }
 
             mistakes = 0;
             hintsUsed = 0;
@@ -530,7 +536,14 @@
             selectedCellIndex = null;
             mistakesDisplay.textContent = `${mistakes}/${maxMistakes}`;
 
-            startTimer();
+            // Do not start the clock while the welcome/instructions modal is open.
+            if (gameStarted) {
+                startTimer();
+            } else {
+                clearInterval(timerInterval);
+                timerSeconds = 0;
+                timerDisplay.textContent = '00:00';
+            }
             renderBoard();
         }
 
@@ -539,19 +552,33 @@
         // =========================
 
         function solveSudoku(grid) {
+            // Backtracking with minimum-remaining-values (MRV), so constrained
+            // cells are tried first. This also respects the active chess rules.
+            let bestIndex = -1;
+            let bestCandidates = null;
+
             for (let i = 0; i < 81; i++) {
-                if (grid[i] === 0) {
-                    for (let num = 1; num <= 9; num++) {
-                        if (isValidPlacement(grid, i, num)) {
-                            grid[i] = num;
-                            if (solveSudoku(grid)) return true;
-                            grid[i] = 0;
-                        }
-                    }
-                    return false;
+                if (grid[i] !== 0) continue;
+                const candidates = [];
+                for (let num = 1; num <= 9; num++) {
+                    if (isValidPlacement(grid, i, num)) candidates.push(num);
+                }
+                if (candidates.length === 0) return false;
+                if (bestCandidates === null || candidates.length < bestCandidates.length) {
+                    bestIndex = i;
+                    bestCandidates = candidates;
+                    if (candidates.length === 1) break;
                 }
             }
-            return true;
+
+            if (bestIndex === -1) return true;
+
+            for (const num of bestCandidates) {
+                grid[bestIndex] = num;
+                if (solveSudoku(grid)) return true;
+                grid[bestIndex] = 0;
+            }
+            return false;
         }
 
         function isValidPlacement(grid, index, num) {
@@ -559,18 +586,19 @@
             const col = index % 9;
 
             for (let i = 0; i < 9; i++) {
-                if (grid[row * 9 + i] === num) return false;
-                if (grid[i * 9 + col] === num) return false;
+                if (i !== col && grid[row * 9 + i] === num) return false;
+                if (i !== row && grid[i * 9 + col] === num) return false;
             }
 
             const boxRow = Math.floor(row / 3) * 3;
             const boxCol = Math.floor(col / 3) * 3;
             for (let r = 0; r < 3; r++) {
                 for (let c = 0; c < 3; c++) {
-                    if (grid[(boxRow + r) * 9 + (boxCol + c)] === num) return false;
+                    const cellIndex = (boxRow + r) * 9 + (boxCol + c);
+                    if (cellIndex !== index && grid[cellIndex] === num) return false;
                 }
             }
-            return true;
+            return isChessRuleValidForGrid(grid, index, num);
         }
 
         // =========================
@@ -611,17 +639,68 @@
             }
 
             if (piece === 'B') {
-                // Bishop rule for Chestoku:
-                // immediate diagonal neighbours must share the Bishop's parity.
+                // Full Bishop X-rays: every square along all four diagonals
+                // until the edge of the 9x9 board is affected.
                 for (const [dr, dc] of [[-1,-1],[-1,1],[1,-1],[1,1]]) {
-                    const nr = row + dr, nc = col + dc;
-                    if (nr >= 0 && nr < 9 && nc >= 0 && nc < 9) {
+                    let nr = row + dr;
+                    let nc = col + dc;
+                    while (nr >= 0 && nr < 9 && nc >= 0 && nc < 9) {
                         affected.push(nr * 9 + nc);
+                        nr += dr;
+                        nc += dc;
                     }
                 }
             }
 
             return affected;
+        }
+
+        // Solver-side validation. Unlike the player-input validator, this reads
+        // directly from the candidate grid being solved.
+        function isChessRuleValidForGrid(grid, index, number) {
+            for (let pieceIndex = 0; pieceIndex < 81; pieceIndex++) {
+                const piece = chessPieces[pieceIndex];
+                if (!piece || pieceIndex === index) continue;
+
+                if (!getChessAffectedCells(pieceIndex).includes(index)) continue;
+
+                const pieceValue = grid[pieceIndex];
+                if (!pieceValue) continue;
+
+                if (piece === 'K' && Math.abs(number - pieceValue) === 1) {
+                    return false;
+                }
+                if (piece === 'N' &&
+                    (number === pieceValue || Math.abs(number - pieceValue) === 1)) {
+                    return false;
+                }
+                if (piece === 'B' && number % 2 !== pieceValue % 2) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        function violatesChessRuleForBoard(grid, index, number) {
+            for (let pieceIndex = 0; pieceIndex < 81; pieceIndex++) {
+                const piece = chessPieces[pieceIndex];
+                if (!piece || pieceIndex === index) continue;
+                if (!getChessAffectedCells(pieceIndex).includes(index)) continue;
+
+                const pieceValue = grid[pieceIndex];
+                if (!pieceValue) continue;
+
+                if (piece === 'K' && Math.abs(number - pieceValue) === 1) {
+                    return 'King rule: adjacent cells cannot be consecutive.';
+                }
+                if (piece === 'N' && (number === pieceValue || Math.abs(number - pieceValue) === 1)) {
+                    return 'Knight rule: L-move cells cannot be equal or consecutive.';
+                }
+                if (piece === 'B' && number % 2 !== pieceValue % 2) {
+                    return 'Bishop rule: diagonal cells must keep the same parity.';
+                }
+            }
+            return null;
         }
 
         function violatesChessRule(index, number) {
@@ -731,33 +810,71 @@
             ) return;
 
             const targetIndex = selectedCellIndex;
-            const correctValue = solution[targetIndex];
+            const previousValue = board[targetIndex];
+            const candidateBoard = [...board];
+            candidateBoard[targetIndex] = 0;
 
-            if (number === correctValue) {
-                const chessViolation = violatesChessRule(targetIndex, number);
-
-                // A correct stage solution should never trigger this.
-                if (chessViolation) {
-                    registerMistake(targetIndex, chessViolation);
-                    return;
-                }
-
-                moveHistory.push({
-                    index: targetIndex,
-                    prevValue: board[targetIndex],
-                    newValue: number
-                });
-
-                board[targetIndex] = number;
-                renderBoard();
-                checkWin();
-            } else {
-                const chessViolation = violatesChessRule(targetIndex, number);
-                registerMistake(
-                    targetIndex,
-                    chessViolation || 'That number does not fit this puzzle.'
-                );
+            const localViolation = getSudokuViolation(candidateBoard, targetIndex, number);
+            if (localViolation) {
+                registerMistake(targetIndex, localViolation);
+                return;
             }
+
+            const chessViolation = violatesChessRuleForBoard(candidateBoard, targetIndex, number);
+            if (chessViolation) {
+                registerMistake(targetIndex, chessViolation);
+                return;
+            }
+
+            // Reject moves that make the remaining puzzle impossible, not merely
+            // moves that differ from one stored answer.
+            candidateBoard[targetIndex] = number;
+            if (!hasAnySolution(candidateBoard)) {
+                registerMistake(targetIndex, 'This move leaves no valid solution. Try another number.');
+                return;
+            }
+
+            moveHistory.push({
+                index: targetIndex,
+                prevValue: previousValue,
+                newValue: number
+            });
+
+            board[targetIndex] = number;
+            renderBoard();
+            checkWin();
+        }
+
+        function getSudokuViolation(grid, index, number) {
+            const row = Math.floor(index / 9);
+            const col = index % 9;
+
+            for (let c = 0; c < 9; c++) {
+                if (c !== col && grid[row * 9 + c] === number) {
+                    return 'Sudoku rule: this number already appears in the row.';
+                }
+            }
+            for (let r = 0; r < 9; r++) {
+                if (r !== row && grid[r * 9 + col] === number) {
+                    return 'Sudoku rule: this number already appears in the column.';
+                }
+            }
+            const boxRow = Math.floor(row / 3) * 3;
+            const boxCol = Math.floor(col / 3) * 3;
+            for (let r = boxRow; r < boxRow + 3; r++) {
+                for (let c = boxCol; c < boxCol + 3; c++) {
+                    const other = r * 9 + c;
+                    if (other !== index && grid[other] === number) {
+                        return 'Sudoku rule: this number already appears in the 3×3 box.';
+                    }
+                }
+            }
+            return null;
+        }
+
+        function hasAnySolution(candidateBoard) {
+            const testGrid = [...candidateBoard];
+            return solveSudoku(testGrid);
         }
 
         function registerMistake(index, message) {
@@ -827,18 +944,24 @@
                 return;
             }
 
-            if (selectedCellIndex === null || initialBoard[selectedCellIndex] !== 0) {
-                showMiniMessage('Select an empty cell first.');
+            // If the selected cell is a clue or is already correct, move the
+            // hint to the first unresolved editable cell instead of making the
+            // player guess why the hint did nothing.
+            let targetIndex = selectedCellIndex;
+            if (targetIndex === null || initialBoard[targetIndex] !== 0 ||
+                board[targetIndex] === solution[targetIndex]) {
+                targetIndex = board.findIndex((value, index) =>
+                    initialBoard[index] === 0 && value !== solution[index]
+                );
+            }
+
+            if (targetIndex === -1 || targetIndex === null) {
+                showMiniMessage('There are no unresolved cells left for a hint.');
                 return;
             }
 
-            if (board[selectedCellIndex] === solution[selectedCellIndex]) {
-                showMiniMessage('That cell is already correct.');
-                return;
-            }
-
-            const correctValue = solution[selectedCellIndex];
-            const targetIndex = selectedCellIndex;
+            selectedCellIndex = targetIndex;
+            const correctValue = solution[targetIndex];
 
             // A hint fills one empty/incorrect editable cell and consumes one hint.
             hintsUsed++;
@@ -854,9 +977,18 @@
         }
 
         function checkWin() {
-            if (board.every((val, idx) => val === solution[idx])) {
-                endGame(true);
+            if (!board.every(val => val !== 0)) return;
+
+            // A completed board wins when it obeys Sudoku and this stage's chess rules.
+            // Do not require every entry to match one pre-stored answer.
+            for (let index = 0; index < 81; index++) {
+                const value = board[index];
+                board[index] = 0;
+                const sudokuValid = isValidPlacement(board, index, value);
+                board[index] = value;
+                if (!sudokuValid || violatesChessRule(index, value)) return;
             }
+            endGame(true);
         }
 
         function endGame(isWin) {
@@ -939,6 +1071,10 @@
 
             btnStart.addEventListener('click', () => {
                 instructionsModal.classList.add('hidden');
+                if (!gameStarted) {
+                    gameStarted = true;
+                    startTimer();
+                }
             });
 
             btnHelp.addEventListener('click', () => {
